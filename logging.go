@@ -2,31 +2,33 @@ package roxxy
 
 import (
 	"fmt"
-	"github.com/isshoni-soft/sakura/channel"
+	"github.com/isshoni-soft/safe-channel"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 )
 
-var logFileChannel = channel.NewSafeStringChannel(5)
-var defaultLogger = NewLogger("engine", 16)
+var logFileChannel *safe_channel.SafeStringChannel
+
+var defaultLogger = NewLogger("logger", 16)
 var dateLayout = "01-02-2006|15:04:05"
-var logFileName = "Sakura-" + time.Now().Format(dateLayout) + ".log"
+var logFileName = "-" + time.Now().Format(dateLayout) + ".log"
 var logFileEnabled = false
 
 type Logger struct {
-	loggerChannel *channel.SafeStringChannel
+	loggerChannel *safe_channel.SafeStringChannel
 
 	prefix string
 }
 
-func InitLogfile(prefix string) {
+func InitLogfile(filePrefix string, fileName string) {
 	if logFileEnabled {
 		return
 	}
 
-	logFileName = filepath.Join(prefix, logFileName)
+	logFileName = filepath.Join(filePrefix, fileName + logFileName)
+	logFileChannel = safe_channel.NewSafeStringChannel(5)
 
 	fixLogFileNameCollisions()
 
@@ -41,8 +43,8 @@ func GetLogger() *Logger {
 
 func NewLogger(prefix string, buffer int) *Logger {
 	result := new(Logger)
-	result.prefix =  "[" + time.Now().Format(dateLayout) +"]: sakura:" + prefix + "| "
-	result.loggerChannel = channel.NewSafeStringChannel(buffer)
+	result.prefix =  "[" + time.Now().Format(dateLayout) +"]: " + prefix + "| "
+	result.loggerChannel = safe_channel.NewSafeStringChannel(buffer)
 
 	go result.loggerTick()
 
@@ -53,7 +55,9 @@ func (l Logger) loggerTick() {
 	l.loggerChannel.ForEach(func(str string) {
 		fmt.Println(str)
 
-		logFileChannel.Offer(str) // now that we've logged the line lets queue it for adding to logfile
+		if logFileChannel != nil {
+			logFileChannel.Offer(str) // now that we've logged the line lets queue it for adding to logfile
+		}
 	})
 }
 

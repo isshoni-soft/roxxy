@@ -1,3 +1,0 @@
-[submodule "channel"]
-	path = channel
-	url = git@github.com:isshoni-soft/safe-channel.git

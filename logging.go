@@ -2,50 +2,84 @@ package roxxy
 
 import (
 	"fmt"
-	"sync"
 )
 
 type Logger struct {
-	mu sync.Mutex
-	stringChannel *safechannel.SafeStringChannel
+	messageQueue chan string
+	shutdownThread chan bool
+	shutdownAwk chan bool
 	prefix string
+	running bool
 }
 
 func NewLogger(prefix string) *Logger {
-	result := &Logger {
-		stringChannel: safechannel.NewSafeStringChannel(10),
+	result := &Logger{
+		messageQueue: make(chan string, 10),
+		shutdownThread: make(chan bool),
+		shutdownAwk: make(chan bool),
 		prefix: prefix,
+		running: true,
 	}
 
 	isInit := make(chan bool, 1)
 	go result.tick(isInit)
-	<-isInit
+	<- isInit
 
 	return result
 }
 
-func (l *Logger) Log(str string) {
-	defer l.mu.Unlock()
-	l.mu.Lock()
+func (l *Logger) Format(str ...string) string {
+	result := l.prefix
 
-	l.stringChannel.Offer(str)
+	for _, s := range str {
+		result = result + s
+	}
+
+	return result
+}
+
+func (l *Logger) Log(str ...string) {
+	if !l.running {
+		return
+	}
+
+	l.messageQueue <- l.Format(str...)
 }
 
 func (l *Logger) Shutdown() {
-	defer l.mu.Unlock()
-	l.mu.Lock()
+	if !l.running {
+		return
+	}
 
-	l.stringChannel.WaitForClose()
+	l.shutdownThread <- true
+	l.running = false
+
+	<- l.shutdownAwk
+}
+
+func (l *Logger) Running() bool {
+	return l.running
 }
 
 func (l *Logger) tick(isInit chan bool) {
 	fmt.Println("init logger tick thread")
 	isInit <- true
 
-	for str := range l.stringChannel.Channel() {
-		safechannel.RunMain(func() {
-			fmt.Println(str)
-		})
+	for {
+		select {
+		case message := <- l.messageQueue:
+			fmt.Println(message)
+		case <- l.shutdownThread:
+			for {
+				select {
+				case message := <- l.messageQueue:
+					fmt.Println(message)
+				default:
+					l.shutdownAwk <- true
+					return
+				}
+			}
+		}
 	}
 }
 

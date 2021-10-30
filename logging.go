@@ -2,14 +2,39 @@ package roxxy
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 )
+
+var writerRunning = false
+var openFiles = make(map[string]os.File)
+var loggersByOpenFile = make(map[string][]Logger)
+var writerChannel = make(chan LoggerEntry)
+
+type LoggerEntry struct {
+	message string
+	file *os.File
+}
 
 type Logger struct {
 	messageQueue chan string
 	shutdownThread chan bool
 	shutdownAwk chan bool
 	prefix string
+	fileSuffix string
+	fileKey string
 	running bool
+	logFile *os.File
+}
+
+func NewFileLogger(prefix string, filePrefix string, fileName string, fileSuffix string) *Logger {
+	logger := NewLogger(prefix)
+	logger.fileSuffix = fileSuffix + ".log"
+
+	logger.StartLoggingToFile(filePrefix, fileName)
+
+	return logger
 }
 
 func NewLogger(prefix string) *Logger {
@@ -28,6 +53,95 @@ func NewLogger(prefix string) *Logger {
 	return result
 }
 
+func tickLoggerFiles(started chan bool) {
+	started <- true
+
+	for entry := range writerChannel {
+		_, err := entry.file.WriteString(entry.message)
+
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func fixLogFileNameCollisions(logFileName string, logFileCore string, logFileSuffix string) string {
+	num := 1
+
+	for ok, _ := exists(logFileName); ok; ok, _ = exists(logFileName) {
+		logFileName = logFileCore + "-" + strconv.FormatInt(int64(num), 10) + logFileSuffix
+		num++
+	}
+
+	return logFileName
+}
+
+func exists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil { return true, nil }
+	if os.IsNotExist(err) { return false, nil }
+	return false, err
+}
+
+func removeIndexFromLoggersByOpenFile(key string, index int) {
+	if len(loggersByOpenFile[key]) == 1 {
+		loggersByOpenFile[key][0].logFile.Close()
+		delete(loggersByOpenFile, key)
+	} else {
+		loggersByOpenFile[key] = append(loggersByOpenFile[key][:index], loggersByOpenFile[key][index + 1])
+	}
+}
+
+func (l *Logger) StartLoggingToFile(filePrefix string, fileName string) {
+	if l.logFile != nil {
+		return
+	}
+
+	logFileName := filepath.Join(filePrefix, fileName + l.fileSuffix)
+	l.fileKey = logFileName
+
+	if val, ok := openFiles[l.fileKey]; ok && writerRunning {
+		l.logFile = &val
+		return
+	}
+
+	logFileName = fixLogFileNameCollisions(logFileName, fileName, l.fileSuffix)
+
+	if _, err := os.Stat(logFileName); os.IsNotExist(err) {
+		err = os.MkdirAll(filepath.Dir(logFileName), os.ModePerm)
+
+		if err != nil {
+			panic(err)
+		}
+
+		f, e := os.Create(logFileName)
+
+		if e != nil {
+			panic(e)
+		}
+
+		l.logFile = f
+
+		openFiles[l.fileKey] = *f
+
+		if val, ok := loggersByOpenFile[l.fileKey]; ok {
+			val = append(val, *l)
+		} else {
+			loggersByOpenFile[l.fileKey] = []Logger{ *l }
+		}
+
+		if !writerRunning {
+			writerRunning = true
+
+			started := make(chan bool)
+			go tickLoggerFiles(started)
+			<-started
+		}
+	} else {
+		panic(err)
+	}
+}
+
 func (l *Logger) Format(str ...string) string {
 	result := l.prefix
 
@@ -43,7 +157,16 @@ func (l *Logger) Log(str ...string) {
 		return
 	}
 
-	l.messageQueue <- l.Format(str...)
+	message := l.Format(str...)
+
+	l.messageQueue <- message
+
+	if l.logFile != nil {
+		writerChannel <- LoggerEntry{
+			message: message + "\n",
+			file: l.logFile,
+		}
+	}
 }
 
 func (l *Logger) Shutdown() {
@@ -53,6 +176,19 @@ func (l *Logger) Shutdown() {
 
 	l.shutdownThread <- true
 	l.running = false
+
+	if l.logFile != nil {
+		delete(openFiles, l.fileKey)
+
+		var remove int
+		for index, logger := range loggersByOpenFile[l.fileKey] {
+			if *l == logger {
+				remove = index
+			}
+		}
+
+		removeIndexFromLoggersByOpenFile(l.fileKey, remove)
+	}
 
 	<- l.shutdownAwk
 }
@@ -81,159 +217,3 @@ func (l *Logger) tick(isInit chan bool) {
 		}
 	}
 }
-
-//
-//import (
-//	"fmt"
-//	"github.com/isshoni-soft/safe-channel"
-//	"os"
-//	"path/filepath"
-//	"strconv"
-//	"sync"
-//	"time"
-//)
-//
-//var loggers []*Logger
-//var logFileChannel *safe_channel.SafeStringChannel
-//var logFileCore string
-//
-//var dateLayout = "01-02-2006|15:04:05"
-//var logFileName = "-" + time.Now().Format(dateLayout) + ".log"
-//var logFileEnabled = false
-//
-//type Logger struct {
-//	mu sync.Mutex
-//	loggerChannel *safe_channel.SafeStringChannel
-//
-//	prefix string
-//	storageIndex int
-//}
-//
-//func InitLogFile(filePrefix string, fileName string) {
-//	if logFileEnabled {
-//		return
-//	}
-//
-//	logFileCore = fileName
-//	logFileName = filepath.Join(filePrefix, fileName + logFileName)
-//	logFileChannel = safe_channel.NewSafeStringChannel(5)
-//
-//	fixLogFileNameCollisions()
-//
-//	logFileEnabled = true
-//
-//	go logFileTick()
-//}
-//
-//func NewLogger(prefix string, buffer int) *Logger {
-//	result := new(Logger)
-//	result.prefix =  "[" + time.Now().Format(dateLayout) +"]: " + prefix + "| "
-//	result.loggerChannel = safe_channel.NewSafeStringChannel(buffer)
-//	result.storageIndex = len(loggers)
-//
-//	loggers = append(loggers, result)
-//
-//	ticked := make(chan bool, 1)
-//	go result.loggerTick(ticked)
-//	<-ticked
-//
-//	return result
-//}
-//
-//func (l *Logger) loggerTick(hasTicked chan bool) {
-//	safe_channel.RunMain(func() {
-//		fmt.Println("logger ticking!")
-//	}, true)
-//
-//	hasTicked <- true
-//
-//	for str := range l.loggerChannel.Channel() {
-//		safe_channel.RunMain(func() {
-//			fmt.Println(str)
-//		}, true)
-//	}
-//}
-//
-//func (l *Logger) Shutdown() {
-//	l.loggerChannel.WaitForClose()
-//}
-//
-//func ShutdownLogging() {
-//	for _, logger := range loggers {
-//		if logger.Closed() {
-//			continue
-//		}
-//
-//		fmt.Println("Shutting down logger: " + logger.prefix)
-//		logger.Shutdown()
-//	}
-//
-//	if logFileEnabled {
-//		logFileChannel.WaitForClose()
-//	}
-//}
-//
-//func (l *Logger) SetPrefix(str string) {
-//	l.prefix = str
-//}
-//
-//func (l *Logger) Format(str ...string) (result string) {
-//	result = l.prefix
-//
-//	for _, s := range str {
-//		result = result + s
-//	}
-//
-//	return
-//}
-//
-//func (l *Logger) Log(str ...string) {
-//	l.mu.Lock()
-//	fmt.Println("queuing log: " + l.Format(str...))
-//	l.loggerChannel.Offer(l.Format(str...))
-//	l.mu.Unlock()
-//}
-//
-//func (l *Logger) Closed() bool {
-//	return l.loggerChannel.Closed()
-//}
-//
-//func fixLogFileNameCollisions() {
-//	num := 1
-//
-//	for _, err := os.Stat(logFileName); os.IsExist(err); {
-//		logFileName = logFileCore + "-" + time.Now().Format(dateLayout) + "-" + strconv.FormatInt(int64(num), 10) + ".log"
-//		num++
-//	}
-//}
-//
-//func logFileTick() {
-//	f, err := os.Create(logFileName)
-//
-//	if os.IsNotExist(err) {
-//		err = os.MkdirAll(filepath.Dir(logFileName), os.ModePerm)
-//
-//		if err != nil {
-//			panic(err)
-//		}
-//
-//		f, err = os.Create(logFileName)
-//	} else {
-//		panic(err)
-//	}
-//
-//	defer func(f *os.File) {
-//		err := f.Close()
-//
-//		if err != nil {
-//			panic(err)
-//		}
-//	}(f)
-//
-//	logFileChannel.ForEach(func(str string) {
-//		_, err := f.WriteString(str + "\n")
-//		if err != nil {
-//			return
-//		}
-//	})
-//}

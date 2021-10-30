@@ -62,7 +62,6 @@ func (l *Logger) Running() bool {
 }
 
 func (l *Logger) tick(isInit chan bool) {
-	fmt.Println("init logger tick thread")
 	isInit <- true
 
 	for {

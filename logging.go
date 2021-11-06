@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
+const defaultTimeFormat = "[01/02/2006|03:04:05.00]: "
 var writerRunning = false
 var openFiles = make(map[string]os.File)
 var loggersByOpenFile = make(map[string][]Logger)
@@ -24,7 +26,9 @@ type Logger struct {
 	prefix string
 	fileSuffix string
 	fileKey string
+	timeFormat string
 	running bool
+	timestamp bool
 	logFile *os.File
 }
 
@@ -37,13 +41,22 @@ func NewFileLogger(prefix string, filePrefix string, fileName string, fileSuffix
 	return logger
 }
 
+func NewLoggerWithoutTimestamp(prefix string) *Logger {
+	logger := NewLogger(prefix)
+	logger.timestamp = false
+
+	return logger
+}
+
 func NewLogger(prefix string) *Logger {
 	result := &Logger{
 		messageQueue: make(chan string, 10),
 		shutdownThread: make(chan bool),
 		shutdownAwk: make(chan bool),
 		prefix: prefix,
+		timeFormat: defaultTimeFormat,
 		running: true,
+		timestamp: true,
 	}
 
 	isInit := make(chan bool, 1)
@@ -143,7 +156,7 @@ func (l *Logger) StartLoggingToFile(filePrefix string, fileName string) {
 }
 
 func (l *Logger) Format(str ...string) string {
-	result := l.prefix
+	result := l.prefix + " "
 
 	for _, s := range str {
 		result = result + s
@@ -197,18 +210,26 @@ func (l *Logger) Running() bool {
 	return l.running
 }
 
+func (l *Logger) handleMessage(message string) {
+	if l.timestamp {
+		message = time.Now().Format(l.timeFormat) + message
+	}
+
+	fmt.Println(message)
+}
+
 func (l *Logger) tick(isInit chan bool) {
 	isInit <- true
 
 	for {
 		select {
 		case message := <- l.messageQueue:
-			fmt.Println(message)
+			l.handleMessage(message)
 		case <- l.shutdownThread:
 			for {
 				select {
 				case message := <- l.messageQueue:
-					fmt.Println(message)
+					l.handleMessage(message)
 				default:
 					l.shutdownAwk <- true
 					return

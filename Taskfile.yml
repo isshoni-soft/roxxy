@@ -1,7 +1,0 @@
-version: '3'
-tasks:
-  pull:
-    run: once
-    desc: Pulls the repo
-    cmds:
-      - git pull

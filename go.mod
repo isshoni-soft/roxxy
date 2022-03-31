@@ -1,4 +1,4 @@
 module github.com/isshoni-soft/roxxy
 
-go 1.17
+go 1.18
 

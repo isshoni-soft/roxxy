@@ -1,4 +1,4 @@
-package roxxy
+package roxxy_v1
 
 import (
 	"fmt"
@@ -9,6 +9,7 @@ import (
 )
 
 const defaultTimeFormat = "[01/02/2006|03:04:05.00]: "
+
 var writerRunning = false
 var openFiles = make(map[string]os.File)
 var loggersByOpenFile = make(map[string][]Logger)
@@ -16,20 +17,20 @@ var writerChannel = make(chan LoggerEntry)
 
 type LoggerEntry struct {
 	message string
-	file *os.File
+	file    *os.File
 }
 
 type Logger struct {
-	messageQueue chan string
+	messageQueue   chan string
 	shutdownThread chan bool
-	shutdownAwk chan bool
-	prefix string
-	fileSuffix string
-	fileKey string
-	timeFormat string
-	running bool
-	timestamp bool
-	logFile *os.File
+	shutdownAwk    chan bool
+	prefix         string
+	fileSuffix     string
+	fileKey        string
+	timeFormat     string
+	running        bool
+	timestamp      bool
+	logFile        *os.File
 }
 
 func NewFileLogger(prefix string, filePrefix string, fileName string, fileSuffix string) *Logger {
@@ -50,18 +51,18 @@ func NewLoggerWithoutTimestamp(prefix string) *Logger {
 
 func NewLogger(prefix string) *Logger {
 	result := &Logger{
-		messageQueue: make(chan string, 10),
+		messageQueue:   make(chan string, 10),
 		shutdownThread: make(chan bool),
-		shutdownAwk: make(chan bool),
-		prefix: prefix,
-		timeFormat: defaultTimeFormat,
-		running: true,
-		timestamp: true,
+		shutdownAwk:    make(chan bool),
+		prefix:         prefix,
+		timeFormat:     defaultTimeFormat,
+		running:        true,
+		timestamp:      true,
 	}
 
 	isInit := make(chan bool, 1)
 	go result.tick(isInit)
-	<- isInit
+	<-isInit
 
 	return result
 }
@@ -91,8 +92,12 @@ func fixLogFileNameCollisions(logFileName string, logFileCore string, logFileSuf
 
 func exists(path string) (bool, error) {
 	_, err := os.Stat(path)
-	if err == nil { return true, nil }
-	if os.IsNotExist(err) { return false, nil }
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
 	return false, err
 }
 
@@ -101,7 +106,7 @@ func removeIndexFromLoggersByOpenFile(key string, index int) {
 		loggersByOpenFile[key][0].logFile.Close()
 		delete(loggersByOpenFile, key)
 	} else {
-		loggersByOpenFile[key] = append(loggersByOpenFile[key][:index], loggersByOpenFile[key][index + 1])
+		loggersByOpenFile[key] = append(loggersByOpenFile[key][:index], loggersByOpenFile[key][index+1])
 	}
 }
 
@@ -110,7 +115,7 @@ func (l *Logger) StartLoggingToFile(filePrefix string, fileName string) {
 		return
 	}
 
-	logFileName := filepath.Join(filePrefix, fileName + l.fileSuffix)
+	logFileName := filepath.Join(filePrefix, fileName+l.fileSuffix)
 	l.fileKey = logFileName
 
 	if val, ok := openFiles[l.fileKey]; ok && writerRunning {
@@ -140,7 +145,7 @@ func (l *Logger) StartLoggingToFile(filePrefix string, fileName string) {
 		if val, ok := loggersByOpenFile[l.fileKey]; ok {
 			val = append(val, *l)
 		} else {
-			loggersByOpenFile[l.fileKey] = []Logger{ *l }
+			loggersByOpenFile[l.fileKey] = []Logger{*l}
 		}
 
 		if !writerRunning {
@@ -177,7 +182,7 @@ func (l *Logger) Log(str ...string) {
 	if l.logFile != nil {
 		writerChannel <- LoggerEntry{
 			message: message + "\n",
-			file: l.logFile,
+			file:    l.logFile,
 		}
 	}
 }
@@ -203,7 +208,7 @@ func (l *Logger) Shutdown() {
 		removeIndexFromLoggersByOpenFile(l.fileKey, remove)
 	}
 
-	<- l.shutdownAwk
+	<-l.shutdownAwk
 }
 
 func (l *Logger) Running() bool {
@@ -223,12 +228,12 @@ func (l *Logger) tick(isInit chan bool) {
 
 	for {
 		select {
-		case message := <- l.messageQueue:
+		case message := <-l.messageQueue:
 			l.handleMessage(message)
-		case <- l.shutdownThread:
+		case <-l.shutdownThread:
 			for {
 				select {
-				case message := <- l.messageQueue:
+				case message := <-l.messageQueue:
 					l.handleMessage(message)
 				default:
 					l.shutdownAwk <- true
